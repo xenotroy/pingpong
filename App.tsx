@@ -240,11 +240,11 @@ export default function PingpongScorekeeper() {
     }
  
     if (saved.state) {
-      setState(saved.state);
+      setState({ ...saved.state, players: { A: saved.state.players.A === "Speler A" ? "Kevin" : saved.state.players.A, B: saved.state.players.B === "Speler B" ? "Wesley" : saved.state.players.B } });
     }
  
     if (Array.isArray(saved.history)) {
-      setHistory(saved.history);
+      setHistory(saved.history.map(m => ({ ...m, players: { A: m.players.A === "Speler A" ? "Kevin" : m.players.A, B: m.players.B === "Speler B" ? "Wesley" : m.players.B } })));
     }
   }, []);
  
