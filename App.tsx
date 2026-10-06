@@ -39,9 +39,16 @@ export default function PingpongScorekeeper() {
   const [roster, setRoster] = useState<string[]>(["Kevin", "Wesley"]);
   const [newPlayer, setNewPlayer] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [displayMessage, setDisplayMessage] = useState("");
+  type SavedMatch = MatchState & { endedAt: number; result: "completed" | "stopped" };
+  const [matches, setMatches] = useState<SavedMatch[]>([]);
+  const [matchesOpen, setMatchesOpen] = useState(false);
+  const [landscapeView, setLandscapeView] = useState(true);
+  const [view, setView] = useState({width: window.innerWidth, height: window.innerHeight});
+  useEffect(() => { const update = () => setView({width: window.visualViewport?.width ?? window.innerWidth, height: window.visualViewport?.height ?? window.innerHeight}); update(); window.addEventListener("resize",update); window.visualViewport?.addEventListener("resize",update); return () => {window.removeEventListener("resize",update);window.visualViewport?.removeEventListener("resize",update);}; }, []);
+  const rotated = landscapeView && view.height > view.width;
+  function rememberMatch(match: MatchState, result: "completed" | "stopped") { if (!match.setScores.some(s => s.A || s.B)) return; setMatches(current => [{...takeSnapshot(match), endedAt: match.lastPointAt ?? Date.now(), result}, ...current.filter(m => m.createdAt !== match.createdAt)]); }
+
   function addPlayer() { const name = newPlayer.trim(); if (!name) return; setRoster(r => r.includes(name) ? r : [...r, name]); setNewPlayer(""); }
-  async function fullscreen() { try { if (!document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen(); await (screen.orientation as any)?.lock?.("landscape"); } catch {} setDisplayMessage("Draai je telefoon voor de liggende scorebordweergave."); }
 
   // Match
   const [loaded, setLoaded] = useState(false);
@@ -50,6 +57,7 @@ export default function PingpongScorekeeper() {
   const [state, setState] = useState<MatchState | null>(null);
   const [history, setHistory] = useState<MatchState[]>([]);
  
+  useEffect(() => { if (loaded && state?.matchWinner) rememberMatch(state,"completed"); }, [loaded, state]);
   // Press-and-hold
   const holdTimeoutRef = useRef<number | null>(null);
   const holdStartRef = useRef<number>(0);
@@ -208,6 +216,8 @@ export default function PingpongScorekeeper() {
       started: boolean;
       pointsToWin?: number;
       roster?: string[];
+      matches?: SavedMatch[];
+      landscapeView?: boolean;
     }>(
       typeof window !== "undefined"
         ? (() => { try { return window.localStorage.getItem(STORAGE_KEY); } catch { return null; } })()
@@ -217,6 +227,8 @@ export default function PingpongScorekeeper() {
     setLoaded(true);
     if (!saved) return;
  
+    if (Array.isArray(saved.matches)) setMatches(saved.matches);
+    if (typeof saved.landscapeView === "boolean") setLandscapeView(saved.landscapeView);
     if (saved.players) {
       setPlayers({ A: saved.players.A === "Speler A" ? "Kevin" : saved.players.A, B: saved.players.B === "Speler B" ? "Wesley" : saved.players.B });
     }
@@ -263,11 +275,15 @@ export default function PingpongScorekeeper() {
         started,
         pointsToWin,
         roster,
+        matches,
+        landscapeView,
       })
     );
     } catch { setStorageError(true); }
   }, [
     loaded,
+    matches,
+    landscapeView,
     pointsToWin,
     roster,
     state,
@@ -280,6 +296,7 @@ export default function PingpongScorekeeper() {
   ]);
  
   function startMatch(randomize = true) {
+    if (state) rememberMatch(state, state.matchWinner ? "completed" : "stopped");
     const initialServer = randomize
       ? randomServer()
       : "A";
@@ -307,6 +324,7 @@ export default function PingpongScorekeeper() {
   }
  
   function resetAll() {
+    if (state) rememberMatch(state, state.matchWinner ? "completed" : "stopped");
     clearHold();
     setHistory([]);
     setState(null);
@@ -376,6 +394,7 @@ export default function PingpongScorekeeper() {
       current.slice(0, -1)
     );
  
+    if (state?.matchWinner) setMatches(current => current.filter(m => m.createdAt !== state.createdAt));
     setState(previous);
   }
  
@@ -445,9 +464,9 @@ export default function PingpongScorekeeper() {
   const shownPlayers = state?.players ?? players;
   const shownScore = currentSet ?? { A: 0, B: 0 };
   const names = Array.from(new Set([...roster, players.A, players.B]));
-  return <main className="app">
-    <header className="topbar"><div className="brand"><span className="ball"/> PING<span>PONG</span><small>KEVIN × WESLEY</small></div><div className="toolbar"><button onClick={fullscreen}>↔ Liggend</button><button onClick={() => setSettingsOpen(v => !v)}>⚙ Instellen</button><button onClick={undo} disabled={!history.length}>↶ Undo</button><button onClick={() => { if (!state || window.confirm("Huidige wedstrijd stoppen en een nieuwe beginnen?")) resetAll(); }}>Nieuwe match</button></div></header>
-    {displayMessage && <p className="display-message" onClick={() => setDisplayMessage("")}>{displayMessage}</p>}
+  return <div className={rotated ? "app-shell turned" : "app-shell"} style={{"--view-w": view.width + "px", "--view-h": view.height + "px"} as React.CSSProperties}><main className={rotated ? "app rotated" : "app"}>
+    <header className="topbar"><div className="brand"><span className="ball"/> PING<span>PONG</span><small>KEVIN × WESLEY</small></div><div className="toolbar"><button aria-pressed={landscapeView} onClick={() => setLandscapeView(v => !v)}>{landscapeView ? "↕ Staand" : "↔ Liggend"}</button><button onClick={() => setMatchesOpen(v => !v)}>Geschiedenis ({matches.length})</button><button onClick={() => setSettingsOpen(v => !v)}>⚙ Instellen</button><button onClick={undo} disabled={!history.length}>↶ Undo</button><button onClick={() => { if (!state || window.confirm("Huidige wedstrijd stoppen en een nieuwe beginnen?")) resetAll(); }}>Nieuwe match</button></div></header>
+
     {(!started || settingsOpen) && <section className="setup"><div className="section-title"><span>MATCH INSTELLEN</span><small>{started ? "Voor je volgende match" : "Kies je spelers. Klaar voor de eerste service?"}</small></div><div className="setup-grid">
       {(["A", "B"] as PlayerKey[]).map(p => <label key={p}>Speler {p}<select value={players[p]} onChange={e => setPlayers(v => ({ ...v, [p]: e.target.value }))}>{names.map(n => <option key={n}>{n}</option>)}</select></label>)}
       <label>Speltype<select value={winMode} onChange={e => setWinMode(e.target.value as any)}><option value="bestOf">Best of</option><option value="firstTo">First to (sets)</option></select></label>
@@ -455,11 +474,12 @@ export default function PingpongScorekeeper() {
       <label>Punten per set<select value={pointsToWin} onChange={e => setPointsToWin(Number(e.target.value))}><option value={11}>11 punten</option><option value={20}>20 punten</option></select></label>
     </div><div className="setup-actions"><div className="add-player"><input aria-label="Nieuwe speler" placeholder="Nieuwe speler…" value={newPlayer} onChange={e => setNewPlayer(e.target.value)} onKeyDown={e => {if(e.key === "Enter") addPlayer();}}/><button onClick={addPlayer} disabled={!newPlayer.trim()}>+ Toevoegen</button></div><button className="start" onClick={() => startMatch(true)}>▶ Start match</button><button onClick={() => startMatch(false)}>Start · {players.A} serveert</button></div></section>}
     <section className="scoreboard" aria-label="Pingpong scorebord"><div className="board-top"><span className="live-dot"/><span>{state?.matchWinner ? "MATCH AFGELOPEN" : started ? "MATCH LIVE" : "READY TO PLAY"}</span><span className="board-meta">SET {state?.currentSet ?? 1} <i>/</i> {state?.bestOf ?? effectiveBestOf} · FIRST TO {state?.setsToWin ?? setsToWin} SETS</span></div>
-      <div className="court">{(["A", "B"] as PlayerKey[]).map(p => <div className={"player-panel player-" + p} key={p}><div className="player-heading"><h1>{shownPlayers[p]}</h1>{started && !state?.matchWinner && liveServer === p && <span className="serve"><span/> SERVICE</span>}</div><button className="score-button" aria-label={"Punt voor " + shownPlayers[p]} onClick={() => scorePoint(p)} disabled={!started || !!state?.matchWinner}><span className="flip-score" key={shownScore[p]}>{String(shownScore[p]).padStart(2,"0")}</span><span className="point-action"><b>+</b> PUNT</span></button><div className="sets-won"><span>SETS GEWONNEN</span><strong>{state?.matchWins[p] ?? 0}</strong><div className="set-dots">{Array.from({length:state?.setsToWin ?? setsToWin},(_,i) => <span key={i} className={i < (state?.matchWins[p] ?? 0) ? "won" : ""}/>)}</div></div></div>)}</div>
+      <div className="court"><div className="center-sets" aria-label="Setstand"><small>SETS</small><div><strong>{state?.matchWins.A ?? 0}</strong><strong>{state?.matchWins.B ?? 0}</strong></div><span>FIRST TO {state?.setsToWin ?? setsToWin}</span></div>{(["A", "B"] as PlayerKey[]).map(p => <div className={"player-panel player-" + p} key={p}><div className="player-heading"><h1>{shownPlayers[p]}</h1>{started && !state?.matchWinner && liveServer === p && <span className="serve"><span/> SERVICE</span>}</div><button className="score-button" aria-label={"Punt voor " + shownPlayers[p]} onClick={() => scorePoint(p)} disabled={!started || !!state?.matchWinner}><span className="flip-score" key={shownScore[p]}>{String(shownScore[p]).padStart(2,"0")}</span><span className="point-action"><b>+</b> PUNT</span></button><div className="sets-won"><span>SETS GEWONNEN</span><strong>{state?.matchWins[p] ?? 0}</strong><div className="set-dots">{Array.from({length:state?.setsToWin ?? setsToWin},(_,i) => <span key={i} className={i < (state?.matchWins[p] ?? 0) ? "won" : ""}/>)}</div></div></div>)}</div>
       <div className="board-bottom"><span>{state?.matchWinner ? "🏆 " + state.players[state.matchWinner] + " wint de match" : started ? "Service · " + state!.players[liveServer!] : "Start een match om te tellen"}</span><small>{state?.pointsToWin ?? pointsToWin} PUNTEN · 2 VERSCHIL</small></div>
     </section>
     <section className="set-history"><div className="section-title"><span>SET VOOR SET</span><small>{state ? state.matchWins.A + " — " + state.matchWins.B : "0 — 0"}</small></div><div className="set-strip">{(state?.setScores ?? [{A:0,B:0}]).map((set,i) => <div className={"set-tile " + (set.winner ? "finished" : "current")} key={i}><small>SET {i+1}{!set.winner && " · LIVE"}</small><div><span className={set.winner === "A" ? "winning" : ""}>{set.A}</span><i>:</i><span className={set.winner === "B" ? "winning" : ""}>{set.B}</span></div><footer>{set.winner ? state!.players[set.winner] : "In het spel"}</footer></div>)}</div></section>
+    {matchesOpen && <section className="match-archive"><div className="section-title"><span>WEDSTRIJDGESCHIEDENIS</span><small>{matches.length} wedstrijden · op deze telefoon</small></div>{!matches.length && <p>Nog geen wedstrijden opgeslagen. Een afgeronde match wordt automatisch bewaard.</p>}{matches.map(m => <details className="archive-item" key={m.createdAt}><summary><span><small>{new Date(m.endedAt).toLocaleString("nl-NL", {dateStyle:"short", timeStyle:"short"})} · {m.result === "completed" ? "Afgerond" : "Gestopt"}</small><b>{m.players.A} <i>vs</i> {m.players.B}</b></span><strong>{m.matchWins.A} : {m.matchWins.B}</strong></summary><p>{m.matchWinner ? "Winnaar: " + m.players[m.matchWinner] : "Wedstrijd niet afgemaakt"} · {m.pointsToWin ?? 11} punten per set</p><div className="set-strip">{m.setScores.map((set,i) => <div className="set-tile" key={i}><small>SET {i+1}{!set.winner ? " · ONVOLTOOID" : ""}</small><div>{set.A}<i>:</i>{set.B}</div><footer>{set.winner ? m.players[set.winner] : "Geen winnaar"}</footer></div>)}</div></details>)}</section>}
     {storageError && <p role="status">Opslaan lukt niet. Houd deze pagina open om je score te bewaren.</p>}
     <details className="rules"><summary>Spelregels & bediening <span>+</span></summary><p>Een set gaat tot {state?.pointsToWin ?? pointsToWin} punten, met minimaal 2 punten verschil. Service wisselt elke 2 punten; vanaf {(state?.pointsToWin ?? pointsToWin)-1}–{(state?.pointsToWin ?? pointsToWin)-1} elke punt. De eerste serveerder wisselt bij iedere nieuwe set. De 20-puntenoptie is jullie eigen spelvariant.</p><p>Tik op het grote scorevlak voor een punt. Undo maakt het laatste punt ongedaan. Toetsen: A / L = punt, U = undo, R = reset. Scores blijven in deze browser bewaard.</p></details>
-  </main>;
+  </main></div>;
 }
